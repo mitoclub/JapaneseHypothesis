@@ -1,0 +1,163 @@
+
+---
+title: "Guo Follow-up, KP"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(reshape2)
+library(corrplot)
+library(plotly)
+library(htmlwidgets)
+library(dplyr)
+library(tidyr)
+```
+
+## Introduction
+
+192: BER vs MMR based on Sygnal signatures
+
+## 1. read derived table, check names and sructure anmd draw barplots
+
+
+```{r}
+
+# Load the data
+data <- read.csv('SingleMoleculeData.txt', sep = '\t')
+
+filtered_data <- data %>%
+  filter(!is.na(BreakPoint3) & !is.na(BreakPoint5) & BreakPoint3 != '/' & BreakPoint5 != '/') %>%
+  filter(as.numeric(BreakPoint3) > 0 & as.numeric(BreakPoint5) > 0)
+
+# Check table of SampleID
+table(filtered_data$SampleID)
+
+# Convert BreakPoint3 and BreakPoint5 to numeric (if needed)
+filtered_data$BreakPoint3 <- as.numeric(filtered_data$BreakPoint3)
+filtered_data$BreakPoint5 <- as.numeric(filtered_data$BreakPoint5)
+
+### PLOT
+
+# Create a new column to classify samples as either 'Disrupted' or 'Perfect'
+filtered_data$Category <- ifelse(filtered_data$SampleID %in% c('86fDisrupted', '91mDisrupted'), 'Disrupted', 'Perfect')
+
+# Set circle parameters
+center_x <- 13453
+center_y <- 8476
+radius <- 225
+
+# Count the number of grey (Perfect) and red (Disrupted) dots within the circle
+within_circle <- filtered_data %>%
+  filter((BreakPoint3 - center_x)^2 + (BreakPoint5 - center_y)^2 <= radius^2)
+
+# Count the dots
+count_grey <- sum(within_circle$Category == 'Perfect')  # Count grey dots
+count_red <- sum(within_circle$Category == 'Disrupted')  # Count red dots
+
+# Print the counts
+cat("Number of grey dots within the circle:", count_grey, "\n")
+cat("Number of red dots within the circle:", count_red, "\n")
+
+# Create data for the circle
+circle_data <- data.frame(
+  x = center_x + radius * cos(seq(0, 2 * pi, length.out = 450)),
+  y = center_y + radius * sin(seq(0, 2 * pi, length.out = 450))
+)
+
+# Create scatterplot with semi-transparent colors and the square
+ggplot(filtered_data, aes(x = BreakPoint3, y = BreakPoint5, color = Category)) +
+  geom_point(alpha = 0.5) +  # Make points semi-transparent (alpha = 0.5)
+  scale_y_continuous(limits = c(NA, 12000)) +  # Limit Y-axis to max of 12000
+  scale_x_continuous(limits = c(11000, NA)) +  # Limit X-axis to min of 11000
+  scale_color_manual(values = c("Disrupted" = "red", "Perfect" = "grey")) +  # Use red and grey for the two categories
+  labs(title = "Scatterplot of BreakPoint3 vs BreakPoint5 by Sample Category", 
+       x = "BreakPoint3", 
+       y = "BreakPoint5") +
+  geom_rect(aes(xmin = 13447, xmax = 13459, ymin = 8470, ymax = 8482), 
+            color = "blue", fill = NA, linetype = "dashed") +  # Add little square with coordinates
+  
+  # Add circle with dotted line
+  geom_path(data = circle_data, aes(x = x, y = y), color = "black", linetype = "dotted") +  # Add green dotted circle
+  
+  coord_fixed(ratio = 1) +  # Fix the aspect ratio to make the circle look circular
+  theme_minimal() +
+  theme(legend.position = "right")
+
+
+```
+
+## 2. Additional Plot with Centered Limits
+
+```{r}
+# New limits calculation
+total_length <- 500
+
+# Calculate the new x and y limits
+x_min_new <- center_x - total_length / 2
+x_max_new <- center_x + total_length / 2
+y_min_new <- center_y - total_length / 2
+y_max_new <- center_y + total_length / 2
+
+# Create the scatterplot with updated limits without the square
+ggplot(filtered_data, aes(x = BreakPoint3, y = BreakPoint5, color = Category)) +
+  geom_point(alpha = 1, size = 2, position = position_jitter(width = 40, height = 40)) +  # Increase transparency and size, add jitter
+  scale_y_continuous(limits = c(y_min_new, y_max_new)) +  # New Y-axis limits
+  scale_x_continuous(limits = c(x_min_new, x_max_new)) +  # New X-axis limits
+  scale_color_manual(values = c("Disrupted" = "red", "Perfect" = "grey")) +  # Use bright red and grey for the two categories
+  labs(title = "Scatterplot of BreakPoint3 vs BreakPoint5 by Sample Category (Centered)", 
+       x = "BreakPoint3", 
+       y = "BreakPoint5") +
+  
+  # Add circle with dotted line
+  geom_path(data = circle_data, aes(x = x, y = y), color = "black", linetype = "dotted") +  # Add green dotted circle
+  
+  coord_fixed(ratio = 1) +  # Fix the aspect ratio to make the circle look circular
+  theme_minimal() +
+  theme(legend.position = "right", 
+        panel.grid.minor = element_blank(),  # Remove minor grid lines for a cleaner look
+        panel.grid.major = element_blank())  # Remove major grid lines for a cleaner look
+```
+
+## 3. Random Permutation Test
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Define the number of permutations
+num_permutations <- 10000
+
+# Initialize counters
+count_same_or_less <- 0
+
+# Total counts for comparison
+total_red <- count_red  # 2 red dots
+total_grey <- count_grey  # 18 grey dots
+
+# Combine categories into a vector for permutation
+categories <- rep(c("Disrupted", "Perfect"), times = c(total_red, total_grey))
+
+# Perform permutations
+for (i in 1:num_permutations) {
+  # Shuffle the category labels
+  shuffled_categories <- sample(categories)
+  
+  # Count the number of red (Disrupted) dots within the circle
+  red_within_circle <- sum(shuffled_categories[1:total_red] == "Disrupted")
+  
+  # Check if the count of red dots is less than or equal to the observed count
+  if (red_within_circle <= total_red) {
+    count_same_or_less <- count_same_or_less + 1
+  }
+}
+
+# Calculate the proportion of permutations that had the same or fewer red dots
+proportion_same_or_less <- count_same_or_less / num_permutations
+
+# Print the results
+cat("Proportion of random permutations with", total_red, "or fewer red dots:", proportion_same_or_less, "\n")
+```
